@@ -4,6 +4,8 @@ use super::peer_stream_connect::PeerStreamConnect;
 use super::stream::Stream;
 use super::tunnel::Tunnel;
 use super::Protocol4;
+use anyhow::anyhow;
+use anyhow::Result;
 use chrono::prelude::*;
 use lazy_static::lazy_static;
 use std::net::SocketAddr;
@@ -63,7 +65,7 @@ impl Client {
         local_addr: SocketAddr,
         remote_addr: SocketAddr,
         peer_stream_connect: (Arc<Box<dyn PeerStreamConnect>>, SocketAddr),
-    ) -> anyhow::Result<PeerClientSender> {
+    ) -> Result<PeerClientSender> {
         let context = self.context.lock().await;
         let tunnel_key = context.client_id.to_string();
         let peer_stream_max_len = context.peer_stream_max_len.clone();
@@ -79,15 +81,19 @@ impl Client {
                 None,
                 Some(peer_stream_connect),
             )
-            .await?;
+            .await
+            .map_err(|e| anyhow!("err:.tunnel.insert_peer_client => e:{}", e))?;
         Ok(peer_client_sender)
     }
 
     pub async fn connect(
         &self,
         peer_stream_connect: Arc<Box<dyn PeerStreamConnect>>,
-    ) -> anyhow::Result<(Stream, SocketAddr, SocketAddr)> {
-        let connect_addr = peer_stream_connect.connect_addr().await?;
+    ) -> Result<(Stream, SocketAddr, SocketAddr)> {
+        let connect_addr = peer_stream_connect
+            .connect_addr()
+            .await
+            .map_err(|e| anyhow!("err:peer_stream_connect.connect_addr => e:{}", e))?;
         let proto = peer_stream_connect.protocol4().await;
         let register_id = Client::register_id(&proto, &connect_addr);
         let peer_client_sender = {
@@ -95,8 +101,10 @@ impl Client {
             if peer_client_sender.is_some() {
                 peer_client_sender.unwrap()
             } else {
-                let (stream, local_addr, remote_addr) =
-                    peer_stream_connect.connect(&connect_addr).await?;
+                let (stream, local_addr, remote_addr) = peer_stream_connect
+                    .connect(&connect_addr)
+                    .await
+                    .map_err(|e| anyhow!("err:peer_stream_connect.connect => e:{}", e))?;
                 let session_id = {
                     let context = self.context.lock().await;
                     format!(
@@ -117,20 +125,24 @@ impl Client {
                         remote_addr,
                         (peer_stream_connect, connect_addr),
                     )
-                    .await?;
+                    .await
+                    .map_err(|e| anyhow!("err:insert_peer_client => e:{}", e))?;
                 PeerClient::client_insert_peer_stream(
                     true,
                     &peer_client_sender,
                     session_id,
                     stream,
                 )
-                .await?;
+                .await
+                .map_err(|e| anyhow!("err:client_insert_peer_stream => e:{}", e))?;
 
                 peer_client_sender
             }
         };
         let stream_id = STREAM_ID.fetch_add(1, Ordering::Relaxed);
-        let stream = PeerClient::async_register_stream(&peer_client_sender, stream_id).await?;
+        let stream = PeerClient::async_register_stream(&peer_client_sender, stream_id)
+            .await
+            .map_err(|e| anyhow!("err:async_register_stream => e:{}", e))?;
         Ok(stream)
     }
 }

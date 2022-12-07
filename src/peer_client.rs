@@ -16,6 +16,8 @@ use super::stream::Stream;
 use super::stream_flow::StreamFlow;
 use super::stream_pack::StreamPack;
 use crate::anychannel::AnyUnboundedReceiver;
+use anyhow::anyhow;
+use anyhow::Result;
 use chrono::prelude::*;
 use hashbrown::HashMap;
 use std::net::SocketAddr;
@@ -128,7 +130,7 @@ impl PeerClient {
         self.peer_client_sender.clone()
     }
 
-    pub async fn start_cmd(&mut self) -> anyhow::Result<()> {
+    pub async fn start_cmd(&mut self) -> Result<()> {
         pub enum PeerClientMsgCmd {
             Cmd(Option<PeerClientCmd>),
             PeerStreamToPeerClient(Option<(u32, TunnelHeaderType, TunnelArcPack)>),
@@ -136,8 +138,8 @@ impl PeerClient {
         }
 
         loop {
-            let ret: anyhow::Result<()> = async {
-                let msg: anyhow::Result<PeerClientMsgCmd> = async {
+            let ret: Result<()> = async {
+                let msg: Result<PeerClientMsgCmd> = async {
                     tokio::select! {
                         biased;
                         msg = self.peer_client_cmd_rx.recv() => {
@@ -150,7 +152,7 @@ impl PeerClient {
                             Ok(PeerClientMsgCmd::Timeout())
                         }
                         else => {
-                            return Err(anyhow::anyhow!("err:start_cmd"))?;
+                            return Err(anyhow!("err:start_cmd"))?;
                         }
                     }
                 }
@@ -160,13 +162,13 @@ impl PeerClient {
                     PeerClientMsgCmd::Cmd(msg) => {
                         self.cmd_cmd(msg)
                             .await
-                            .map_err(|e| anyhow::anyhow!("err:cmd_cmd => e:{}", e))?;
+                            .map_err(|e| anyhow!("err:cmd_cmd => e:{}", e))?;
                     }
                     PeerClientMsgCmd::PeerStreamToPeerClient(msg) => {
                         self.cmd_peer_stream_to_peer_client(msg)
                             .await
                             .map_err(|e| {
-                                anyhow::anyhow!("err:cmd_peer_stream_to_peer_client => e:{}", e)
+                                anyhow!("err:cmd_peer_stream_to_peer_client => e:{}", e)
                             })?;
                     }
                     PeerClientMsgCmd::Timeout() => {}
@@ -180,7 +182,7 @@ impl PeerClient {
                     self.last_check_connect_timestamp = curr_timestamp;
                     self.cmd_check_connect()
                         .await
-                        .map_err(|e| anyhow::anyhow!("err:cmd_check_connect => e:{}", e))?;
+                        .map_err(|e| anyhow!("err:cmd_check_connect => e:{}", e))?;
                 }
                 Ok(())
             }
@@ -189,7 +191,7 @@ impl PeerClient {
         }
     }
 
-    pub async fn cmd_cmd(&mut self, msg: Option<PeerClientCmd>) -> anyhow::Result<()> {
+    pub async fn cmd_cmd(&mut self, msg: Option<PeerClientCmd>) -> Result<()> {
         match msg {
             Some(cmd) => match cmd {
                 PeerClientCmd::RegisterStream(cmd) => self.cmd_register_stream(cmd).await,
@@ -203,7 +205,7 @@ impl PeerClient {
     pub async fn cmd_peer_stream_to_peer_client(
         &mut self,
         msg: Option<(u32, TunnelHeaderType, TunnelArcPack)>,
-    ) -> anyhow::Result<()> {
+    ) -> Result<()> {
         if msg.is_none() {
             return Ok(());
         }
@@ -239,13 +241,16 @@ impl PeerClient {
             AnyAsyncSenderErr::None(pack) => {
                 if self.accept_tx.is_some() {
                     log::debug!("accept_tx send");
-                    let stream = self.register_stream(stream_id).await?;
+                    let stream = self
+                        .register_stream(stream_id)
+                        .await
+                        .map_err(|e| anyhow!("err:register_stream => e:{}", e))?;
                     self.accept_tx
                         .as_ref()
                         .unwrap()
                         .send(stream)
                         .await
-                        .map_err(|_| anyhow::anyhow!("err:accept_tx"))?;
+                        .map_err(|_| anyhow!("err:accept_tx"))?;
                     self.stream_pack_tx_map.send(stream_id, pack).await;
                     return Ok(());
                 }
@@ -263,7 +268,7 @@ impl PeerClient {
         Ok(())
     }
 
-    pub async fn cmd_check_connect(&mut self) -> anyhow::Result<()> {
+    pub async fn cmd_check_connect(&mut self) -> Result<()> {
         // let flow_read = self.flow_read;
         // let flow_write = self.flow_write;
         self.flow_read = 0;
@@ -320,14 +325,18 @@ impl PeerClient {
         Ok(())
     }
 
-    pub async fn create_connect(&mut self) -> anyhow::Result<()> {
+    pub async fn create_connect(&mut self) -> Result<()> {
         let (peer_stream_connect, connect_addr) = self.peer_stream_connect.as_ref().unwrap();
 
         log::debug!("connect_addr:{}", connect_addr);
-        let (stream, _, _) = peer_stream_connect.connect(connect_addr).await?;
+        let (stream, _, _) = peer_stream_connect
+            .connect(connect_addr)
+            .await
+            .map_err(|e| anyhow!("err:peer_stream_connect.connect => e:{}", e))?;
         let session_id = self.session_id.clone();
         PeerClient::client_insert_peer_stream(true, &self.peer_client_sender, session_id, stream)
-            .await?;
+            .await
+            .map_err(|e| anyhow!("err:client_insert_peer_stream => e:{}", e))?;
         Ok(())
     }
 
@@ -337,7 +346,7 @@ impl PeerClient {
             u32,
             mpsc::UnboundedSender<(AnyUnboundedReceiver<TunnelArcPack>, SocketAddr, SocketAddr)>,
         ),
-    ) -> anyhow::Result<()> {
+    ) -> Result<()> {
         let (stream_id, tx) = cmd;
         let peer_client_to_stream_pack_rx = self.stream_pack_tx_map.channel(0, stream_id);
         tx.send((
@@ -345,18 +354,18 @@ impl PeerClient {
             self.local_addr.clone(),
             self.remote_addr.clone(),
         ))
-        .map_err(|_| anyhow::anyhow!("err:cmd_register_stream"))?;
+        .map_err(|_| anyhow!("err:cmd_register_stream"))?;
         Ok(())
     }
 
-    pub async fn cmd_pack_waiting(&mut self, cmd: (u32, u32)) -> anyhow::Result<()> {
+    pub async fn cmd_pack_waiting(&mut self, cmd: (u32, u32)) -> Result<()> {
         let (stream_id, waiting_pack_len) = cmd;
         self.waiting_pack_len_map
             .insert(stream_id, waiting_pack_len);
         Ok(())
     }
 
-    pub async fn cmd_peer_stream_flow(&mut self, cmd: (i64, i64)) -> anyhow::Result<()> {
+    pub async fn cmd_peer_stream_flow(&mut self, cmd: (i64, i64)) -> Result<()> {
         let (read, write) = cmd;
         self.flow_read += read;
         self.flow_write += write;
@@ -368,7 +377,7 @@ impl PeerClient {
         peer_client_sender: &PeerClientSender,
         session_id: String,
         mut stream: StreamFlow,
-    ) -> anyhow::Result<()> {
+    ) -> Result<()> {
         let hello_pack = TunnelHello {
             version: TUNNEL_VERSION.to_string(),
             session_id,
@@ -381,9 +390,12 @@ impl PeerClient {
             &hello_pack,
             true,
         )
-        .await?;
+        .await
+        .map_err(|e| anyhow!("err:protopack::write_pack => e:{}", e))?;
 
-        PeerClient::insert_peer_stream(is_spawn, peer_client_sender, stream).await?;
+        PeerClient::insert_peer_stream(is_spawn, peer_client_sender, stream)
+            .await
+            .map_err(|e| anyhow!("err:insert_peer_stream => e:{}", e))?;
         Ok(())
     }
 
@@ -391,7 +403,7 @@ impl PeerClient {
         is_spawn: bool,
         peer_client_sender: &PeerClientSender,
         stream: StreamFlow,
-    ) -> anyhow::Result<()> {
+    ) -> Result<()> {
         let peer_client_cmd_tx = peer_client_sender.peer_client_cmd_tx.clone();
         let peer_stream_to_peer_client_tx =
             peer_client_sender.peer_stream_to_peer_client_tx.clone();
@@ -406,22 +418,23 @@ impl PeerClient {
             peer_stream_to_peer_client_tx,
             stream_pack_to_peer_stream_rx,
         )
-        .await?;
+        .await
+        .map_err(|e| anyhow!("err:PeerStream::start => e:{}", e))?;
         Ok(())
     }
 
     pub async fn async_register_stream(
         peer_client_sender: &PeerClientSender,
         stream_id: u32,
-    ) -> anyhow::Result<(Stream, SocketAddr, SocketAddr)> {
+    ) -> Result<(Stream, SocketAddr, SocketAddr)> {
         let (wait_tx, mut wait_rx) = mpsc::unbounded_channel();
         peer_client_sender
             .peer_client_cmd_tx
             .send(PeerClientCmd::RegisterStream((stream_id, wait_tx)))
-            .map_err(|_| anyhow::anyhow!("err:RegisterStream"))?;
+            .map_err(|_| anyhow!("err:RegisterStream"))?;
         let msg = wait_rx.recv().await;
         if msg.is_none() {
-            return Err(anyhow::anyhow!("err:RegisterStream"))?;
+            return Err(anyhow!("err:RegisterStream"))?;
         }
         let (peer_client_to_stream_pack_rx, local_addr, remote_addr) = msg.unwrap();
         let peer_client_cmd_tx = peer_client_sender.peer_client_cmd_tx.clone();
@@ -441,7 +454,7 @@ impl PeerClient {
     pub async fn register_stream(
         &mut self,
         stream_id: u32,
-    ) -> anyhow::Result<(Stream, SocketAddr, SocketAddr)> {
+    ) -> Result<(Stream, SocketAddr, SocketAddr)> {
         log::debug!("accept_map stream_id:{:?}", stream_id);
         let peer_client_sender = &self.peer_client_sender;
         let local_addr = self.local_addr.clone();
@@ -468,7 +481,7 @@ impl PeerClient {
         local_addr: SocketAddr,
         remote_addr: SocketAddr,
         peer_client_to_stream_pack_rx: AnyUnboundedReceiver<TunnelArcPack>,
-    ) -> anyhow::Result<(Stream, SocketAddr, SocketAddr)> {
+    ) -> Result<(Stream, SocketAddr, SocketAddr)> {
         let (stream_to_stream_pack_tx, stream_to_stream_pack_rx) = async_channel::bounded(100);
         let (stream_pack_to_stream_tx, stream_pack_to_stream_rx) =
             mpsc::channel::<Arc<TunnelData>>(100);

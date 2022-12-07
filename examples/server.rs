@@ -9,7 +9,7 @@ use tokio::net::TcpListener;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Err(e) = log4rs::init_file("examples/log4rs.yaml", Default::default()) {
         eprintln!("err:log4rs::init_file => e:{}", e);
-        return Err(anyhow::anyhow!("err:log4rs::init_fil"))?;
+        return Err(anyhow!("err:log4rs::init_fil"))?;
     }
 
     let listen_addr = "127.0.0.1:28081".to_socket_addrs()?.next().unwrap();
@@ -24,7 +24,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let (mut stream, _, _) = listen.accept().await.unwrap();
             log::info!("tunnel listen.accept");
             tokio::spawn(async move {
-                let ret: anyhow::Result<()> = async {
+                let ret: Result<()> = async {
                     stream.read_i32().await?;
                     let mut n = 0;
                     loop {

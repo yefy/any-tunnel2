@@ -1,3 +1,5 @@
+use anyhow::anyhow;
+use anyhow::Result;
 use chrono::prelude::*;
 use std::future::Future;
 use std::io;
@@ -84,7 +86,7 @@ impl StreamFlow {
     async fn read_flow(&self, buf: &mut tokio::io::ReadBuf<'_>) -> io::Result<()> {
         let mut stream_err: StreamFlowErr = StreamFlowErr::Init;
         let mut kind: ErrorKind = io::ErrorKind::NotFound;
-        let ret: anyhow::Result<usize> = async {
+        let ret: Result<usize> = async {
             loop {
                 match tokio::time::timeout(
                     self.read_timeout,
@@ -96,7 +98,7 @@ impl StreamFlow {
                         Ok(0) => {
                             stream_err = StreamFlowErr::ReadClose;
                             kind = io::ErrorKind::ConnectionReset;
-                            return Err(anyhow::anyhow!("err:read_flow close"));
+                            return Err(anyhow!("err:read_flow close"));
                         }
                         Ok(usize) => {
                             if self.is_rw_timeout.load(Ordering::Relaxed) {
@@ -108,26 +110,22 @@ impl StreamFlow {
                         Err(ref e) if e.kind() == io::ErrorKind::TimedOut => {
                             stream_err = StreamFlowErr::ReadTimeout;
                             kind = io::ErrorKind::TimedOut;
-                            return Err(anyhow::anyhow!("err:read_flow timeout"));
+                            return Err(anyhow!("err:read_flow timeout"));
                         }
                         Err(ref e) if e.kind() == io::ErrorKind::ConnectionReset => {
                             stream_err = StreamFlowErr::ReadReset;
                             kind = io::ErrorKind::ConnectionReset;
-                            return Err(anyhow::anyhow!("err:read_flow reset"));
+                            return Err(anyhow!("err:read_flow reset"));
                         }
                         Err(ref e) if e.kind() == io::ErrorKind::NotConnected => {
                             stream_err = StreamFlowErr::ReadClose;
                             kind = io::ErrorKind::ConnectionReset;
-                            return Err(anyhow::anyhow!("err:read_flow close"));
+                            return Err(anyhow!("err:read_flow close"));
                         }
                         Err(e) => {
                             stream_err = StreamFlowErr::ReadErr;
                             kind = e.kind();
-                            return Err(anyhow::anyhow!(
-                                "err:read_flow => kind:{:?}, e:{}",
-                                e.kind(),
-                                e
-                            ));
+                            return Err(anyhow!("err:read_flow => kind:{:?}, e:{}", e.kind(), e));
                         }
                     },
                     Err(_) => {
@@ -141,7 +139,7 @@ impl StreamFlow {
                         }
                         stream_err = StreamFlowErr::ReadTimeout;
                         kind = io::ErrorKind::TimedOut;
-                        return Err(anyhow::anyhow!("err:read_flow timeout"));
+                        return Err(anyhow!("err:read_flow timeout"));
                     }
                 }
             }
@@ -169,7 +167,7 @@ impl StreamFlow {
     async fn write_flow(&self, buf: &[u8]) -> io::Result<usize> {
         let mut stream_err: StreamFlowErr = StreamFlowErr::Init;
         let mut kind: ErrorKind = io::ErrorKind::NotFound;
-        let ret: anyhow::Result<usize> = async {
+        let ret: Result<usize> = async {
             loop {
                 match tokio::time::timeout(
                     self.write_timeout,
@@ -181,7 +179,7 @@ impl StreamFlow {
                         Ok(0) => {
                             stream_err = StreamFlowErr::WriteClose;
                             kind = io::ErrorKind::ConnectionReset;
-                            return Err(anyhow::anyhow!("err:write_flow close"));
+                            return Err(anyhow!("err:write_flow close"));
                         }
                         Ok(usize) => {
                             if self.is_rw_timeout.load(Ordering::Relaxed) {
@@ -193,26 +191,22 @@ impl StreamFlow {
                         Err(ref e) if e.kind() == io::ErrorKind::TimedOut => {
                             stream_err = StreamFlowErr::WriteTimeout;
                             kind = io::ErrorKind::TimedOut;
-                            return Err(anyhow::anyhow!("err:write_flow timeout"));
+                            return Err(anyhow!("err:write_flow timeout"));
                         }
                         Err(ref e) if e.kind() == io::ErrorKind::ConnectionReset => {
                             stream_err = StreamFlowErr::WriteReset;
                             kind = io::ErrorKind::ConnectionReset;
-                            return Err(anyhow::anyhow!("err:write_flow reset"));
+                            return Err(anyhow!("err:write_flow reset"));
                         }
                         Err(ref e) if e.kind() == io::ErrorKind::NotConnected => {
                             stream_err = StreamFlowErr::WriteClose;
                             kind = io::ErrorKind::ConnectionReset;
-                            return Err(anyhow::anyhow!("err:write_flow close"));
+                            return Err(anyhow!("err:write_flow close"));
                         }
                         Err(e) => {
                             stream_err = StreamFlowErr::WriteErr;
                             kind = e.kind();
-                            return Err(anyhow::anyhow!(
-                                "err:write_flow => kind:{:?}, e:{}",
-                                e.kind(),
-                                e
-                            ));
+                            return Err(anyhow!("err:write_flow => kind:{:?}, e:{}", e.kind(), e));
                         }
                     },
                     Err(_) => {
@@ -226,7 +220,7 @@ impl StreamFlow {
                         }
                         stream_err = StreamFlowErr::WriteTimeout;
                         kind = io::ErrorKind::TimedOut;
-                        return Err(anyhow::anyhow!("err:write_flow timeout"));
+                        return Err(anyhow!("err:write_flow timeout"));
                     }
                 }
             }

@@ -9,6 +9,8 @@ use super::protopack::TunnelDataAckData;
 use super::protopack::TunnelDataAckHeader;
 use super::protopack::TunnelDataHeader;
 use crate::protopack::TunnelHeartbeat;
+use anyhow::anyhow;
+use anyhow::Result;
 use chrono::prelude::*;
 use lazy_static::lazy_static;
 use std::collections::HashMap;
@@ -128,44 +130,44 @@ impl StreamPack {
         peer_client_to_stream_pack_rx: AnyUnboundedReceiver<TunnelArcPack>,
         mut stream_to_stream_pack_rx: async_channel::Receiver<Vec<u8>>,
         peer_client_cmd_tx: mpsc::UnboundedSender<PeerClientCmd>,
-    ) -> anyhow::Result<()> {
+    ) -> Result<()> {
         let is_close = Arc::new(AtomicBool::new(false));
-        let ret: anyhow::Result<()> = async {
+        let ret: Result<()> = async {
             tokio::select! {
                 biased;
                 ret = self.peer_client_to_stream_pack(is_close.clone(), stream_pack_to_stream_tx, peer_client_to_stream_pack_rx) => {
-                    ret.map_err(|e| anyhow::anyhow!("err:peer_client_to_stream_pack => e:{}", e))?;
+                    ret.map_err(|e| anyhow!("err:peer_client_to_stream_pack => e:{}", e))?;
                     Ok(())
                 }
                 ret = self.stream_to_stream_pack(is_close.clone(), &mut stream_to_stream_pack_rx) => {
-                    ret.map_err(|e| anyhow::anyhow!("err:stream_to_stream_pack => e:{}", e))?;
+                    ret.map_err(|e| anyhow!("err:stream_to_stream_pack => e:{}", e))?;
                     Ok(())
                 }
                 ret = self.check_waiting_pack_timeout(peer_client_cmd_tx.clone()) => {
-                    ret.map_err(|e| anyhow::anyhow!("err:check_waiting_pack_timeout => e:{}", e))?;
+                    ret.map_err(|e| anyhow!("err:check_waiting_pack_timeout => e:{}", e))?;
                     Ok(())
                 }
                 ret = self.heartbeat() => {
-                    ret.map_err(|e| anyhow::anyhow!("err:heartbeat => e:{}", e))?;
+                    ret.map_err(|e| anyhow!("err:heartbeat => e:{}", e))?;
                     Ok(())
                 }
                 ret = self.send_tunnel_data_ack() => {
-                    ret.map_err(|e| anyhow::anyhow!("err:send_tunnel_data_ack => e:{}", e))?;
+                    ret.map_err(|e| anyhow!("err:send_tunnel_data_ack => e:{}", e))?;
                     Ok(())
                 }
                 ret = self.check_send_flow() => {
-                    ret.map_err(|e| anyhow::anyhow!("err:check_send_flow => e:{}", e))?;
+                    ret.map_err(|e| anyhow!("err:check_send_flow => e:{}", e))?;
                     Ok(())
                 }
                 else => {
-                    return Err(anyhow::anyhow!("err:select"));
+                    return Err(anyhow!("err:select"));
                 }
             }
         }
             .await;
         let _ = peer_client_cmd_tx
             .send(PeerClientCmd::PackWaiting((self.stream_id, 0)))
-            .map_err(|_| anyhow::anyhow!("err:PackWaiting"));
+            .map_err(|_| anyhow!("err:PackWaiting"));
         log::debug!("send_pack_close");
         if let Err(_) = self.send_pack_close().await {
             log::debug!("send_pack_close err");
@@ -179,7 +181,7 @@ impl StreamPack {
         is_close: Arc<AtomicBool>,
         stream_pack_to_stream_tx: mpsc::Sender<Arc<TunnelData>>,
         mut peer_client_to_stream_pack_rx: AnyUnboundedReceiver<TunnelArcPack>,
-    ) -> anyhow::Result<()> {
+    ) -> Result<()> {
         let mut pack_id = 1u32;
         let mut send_pack_id_map = HashMap::<u32, ()>::new();
         let mut recv_pack_cache_map = HashMap::<u32, Arc<TunnelData>>::new();
@@ -189,7 +191,7 @@ impl StreamPack {
                 continue;
             }
 
-            let ret: anyhow::Result<()> = async {
+            let ret: Result<()> = async {
                 match tokio::time::timeout(
                     tokio::time::Duration::from_millis(100),
                     peer_client_to_stream_pack_rx.recv(),
@@ -200,7 +202,7 @@ impl StreamPack {
                         //let pack = peer_client_to_stream_pack_rx.recv().await;
                         if pack.is_none() {
                             log::debug!("peer_client_to_stream_pack close");
-                            return Err(anyhow::anyhow!("err:peer_client_to_stream_pack_rx close"));
+                            return Err(anyhow!("err:peer_client_to_stream_pack_rx close"));
                         }
                         let pack = pack.unwrap();
                         match pack {
@@ -239,7 +241,7 @@ impl StreamPack {
                                                 tokio::sync::mpsc::error::TrySendError::Closed(
                                                     _,
                                                 ) => {
-                                                    return Err(anyhow::anyhow!(
+                                                    return Err(anyhow!(
                                                         "err:stream_pack_to_stream_tx close"
                                                     ));
                                                 }
@@ -249,14 +251,23 @@ impl StreamPack {
                                             pack_id += 1;
                                             #[cfg(feature = "tunnel-wait-ack")]
                                             {
-                                                self.add_tunnel_data_ack(&value).await?;
+                                                self.add_tunnel_data_ack(&value).await.map_err(
+                                                    |e| {
+                                                        anyhow!(
+                                                            "err:add_tunnel_data_ack => e:{}",
+                                                            e
+                                                        )
+                                                    },
+                                                )?;
                                             }
                                         }
                                     }
                                 } else {
                                     #[cfg(feature = "tunnel-wait-ack")]
                                     {
-                                        self.add_tunnel_data_ack(&value).await?;
+                                        self.add_tunnel_data_ack(&value).await.map_err(|e| {
+                                            anyhow!("err:add_tunnel_data_ack => e:{}", e)
+                                        })?;
                                     }
                                 }
                             }
@@ -305,10 +316,12 @@ impl StreamPack {
                                     log::error!("err:TunnelClose.stream_id != self.stream_id");
                                     return Ok(());
                                 }
-                                return Err(anyhow::anyhow!("err:TunnelClose"))?;
+                                return Err(anyhow!("err:TunnelClose"))?;
                             }
                             TunnelArcPack::TunnelHeartbeat(value) => {
-                                self.send_heartbeat_ack(value).await?;
+                                self.send_heartbeat_ack(value)
+                                    .await
+                                    .map_err(|e| anyhow!("err:send_heartbeat_ack => e:{}", e))?;
                             }
                             TunnelArcPack::TunnelHeartbeatAck(value) => {
                                 self.recv_ack_init(value.time).await;
@@ -326,9 +339,7 @@ impl StreamPack {
                                         break;
                                     }
                                     tokio::sync::mpsc::error::TrySendError::Closed(_) => {
-                                        return Err(anyhow::anyhow!(
-                                            "err:stream_pack_to_stream_tx close"
-                                        ));
+                                        return Err(anyhow!("err:stream_pack_to_stream_tx close"));
                                     }
                                 }
                             } else {
@@ -336,7 +347,9 @@ impl StreamPack {
                                 pack_id += 1;
                                 #[cfg(feature = "tunnel-wait-ack")]
                                 {
-                                    self.add_tunnel_data_ack(&value).await?;
+                                    self.add_tunnel_data_ack(&value).await.map_err(|e| {
+                                        anyhow!("err:add_tunnel_data_ack => e:{}", e)
+                                    })?;
                                 }
                             }
                         }
@@ -375,11 +388,11 @@ impl StreamPack {
         &self,
         is_close: Arc<AtomicBool>,
         stream_to_stream_pack_rx: &mut async_channel::Receiver<Vec<u8>>,
-    ) -> anyhow::Result<()> {
+    ) -> Result<()> {
         let mut pack_id = 0;
         let mut curr_send_pack_len_timeout = 0;
         loop {
-            let ret: anyhow::Result<()> = async {
+            let ret: Result<()> = async {
                 //curl http://www.upstream.cn:18080/5g.b --output a --limit-rate 100k
                 //这里超时了也要尝试接受数据包，不然上游可能超时断开
                 #[cfg(feature = "tunnel-wait-ack")]
@@ -415,9 +428,8 @@ impl StreamPack {
                 )
                 .await
                 {
-                    Ok(datas) => datas.map_err(|e| {
-                        anyhow::anyhow!("err:stream_to_stream_pack_rx recv => e:{}", e)
-                    })?,
+                    Ok(datas) => datas
+                        .map_err(|e| anyhow!("err:stream_to_stream_pack_rx recv => e:{}", e))?,
                     Err(_) => {
                         return Ok(());
                     }
@@ -434,7 +446,7 @@ impl StreamPack {
                 let value = Arc::new(TunnelData { header, datas });
                 self.stream_pack_to_peer_client(pack_id, TunnelArcPack::TunnelData(value), 0)
                     .await
-                    .map_err(|e| anyhow::anyhow!("err:stream_pack_to_peer_client => e:{}", e))?;
+                    .map_err(|e| anyhow!("err:stream_pack_to_peer_client => e:{}", e))?;
                 Ok(())
             }
             .await;
@@ -453,7 +465,7 @@ impl StreamPack {
     async fn check_waiting_pack_timeout(
         &self,
         peer_client_cmd_tx: mpsc::UnboundedSender<PeerClientCmd>,
-    ) -> anyhow::Result<()> {
+    ) -> Result<()> {
         let diff_time = 2;
         loop {
             tokio::time::sleep(tokio::time::Duration::from_secs(diff_time)).await;
@@ -464,7 +476,7 @@ impl StreamPack {
                     self.stream_id,
                     waiting_pack_len,
                 )))
-                .map_err(|_| anyhow::anyhow!("err:PackWaiting"))?;
+                .map_err(|_| anyhow!("err:PackWaiting"))?;
 
             let curr_timestamp = Local::now().timestamp_millis();
             loop {
@@ -503,12 +515,13 @@ impl StreamPack {
                     waiting_pack,
                     first_send_time,
                 )
-                .await?;
+                .await
+                .map_err(|e| anyhow!("err:stream_pack_to_peer_client => e:{}", e))?;
             }
         }
     }
 
-    async fn heartbeat(&self) -> anyhow::Result<()> {
+    async fn heartbeat(&self) -> Result<()> {
         loop {
             tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
             let max_send_pack_len = self.max_send_pack_len.load(Ordering::Relaxed);
@@ -530,7 +543,9 @@ impl StreamPack {
             if curr_time - self.last_recv_ack_time.load(Ordering::Relaxed) < 1000 * 5 {
                 continue;
             }
-            self.send_heartbeat().await?;
+            self.send_heartbeat()
+                .await
+                .map_err(|e| anyhow!("err:send_heartbeat => e:{}", e))?;
             let heartbeat_count = self.heartbeat_count.fetch_add(1, Ordering::Relaxed);
             if heartbeat_count >= 20 {
                 log::error!("heartbeat timeout");
@@ -539,7 +554,7 @@ impl StreamPack {
         }
     }
 
-    async fn send_pack_close(&self) -> anyhow::Result<()> {
+    async fn send_pack_close(&self) -> Result<()> {
         let value = Arc::new(TunnelClose {
             stream_id: self.stream_id.clone(),
         });
@@ -549,7 +564,7 @@ impl StreamPack {
         Ok(())
     }
 
-    async fn add_tunnel_data_ack(&self, value: &TunnelData) -> anyhow::Result<()> {
+    async fn add_tunnel_data_ack(&self, value: &TunnelData) -> Result<()> {
         log::trace!("TunnelDataAck:{:?}", value.header);
         let mut tunnel_data_ack = self.tunnel_data_ack.lock().await;
         if tunnel_data_ack.is_none() {
@@ -575,7 +590,7 @@ impl StreamPack {
         Ok(())
     }
 
-    async fn check_send_flow(&self) -> anyhow::Result<()> {
+    async fn check_send_flow(&self) -> Result<()> {
         loop {
             let first_ack_time = self.first_ack_time.load(Ordering::Relaxed);
             if first_ack_time == 0 {
@@ -628,7 +643,7 @@ impl StreamPack {
         }
     }
 
-    async fn send_tunnel_data_ack(&self) -> anyhow::Result<()> {
+    async fn send_tunnel_data_ack(&self) -> Result<()> {
         loop {
             tokio::time::sleep(tokio::time::Duration::from_millis(
                 self.ack_delay_time.load(Ordering::Relaxed) as u64,
@@ -649,7 +664,7 @@ impl StreamPack {
         }
     }
 
-    async fn send_heartbeat(&self) -> anyhow::Result<()> {
+    async fn send_heartbeat(&self) -> Result<()> {
         let value = Arc::new(TunnelHeartbeat {
             stream_id: self.stream_id,
             time: Local::now().timestamp_millis(),
@@ -662,7 +677,7 @@ impl StreamPack {
         Ok(())
     }
 
-    async fn send_heartbeat_ack(&self, value: Arc<TunnelHeartbeat>) -> anyhow::Result<()> {
+    async fn send_heartbeat_ack(&self, value: Arc<TunnelHeartbeat>) -> Result<()> {
         let value = Arc::new(TunnelHeartbeat {
             stream_id: value.stream_id,
             time: value.time,
@@ -680,7 +695,7 @@ impl StreamPack {
         pack_id: u32,
         pack: TunnelArcPack,
         first_send_time: i64,
-    ) -> anyhow::Result<()> {
+    ) -> Result<()> {
         #[cfg(feature = "tunnel-wait-ack")]
         {
             let curr_timestamp = Local::now().timestamp_millis();

@@ -6,6 +6,8 @@ use super::stream_flow::StreamFlow;
 use super::tunnel::Tunnel;
 use super::Protocol4;
 use crate::peer_client::PeerClientSender;
+use anyhow::anyhow;
+use anyhow::Result;
 use std::net::SocketAddr;
 use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
@@ -23,7 +25,7 @@ impl Listener {
         Listener { accept_rx }
     }
 
-    pub async fn accept(&mut self) -> anyhow::Result<(Stream, SocketAddr, SocketAddr)> {
+    pub async fn accept(&mut self) -> Result<(Stream, SocketAddr, SocketAddr)> {
         let accept = self.accept_rx.recv().await?;
         log::debug!("accept_rx recv");
         Ok(accept)
@@ -46,7 +48,7 @@ impl Publish {
         stream: RW,
         local_addr: SocketAddr,
         remote_addr: SocketAddr,
-    ) -> anyhow::Result<()> {
+    ) -> Result<()> {
         self.server
             .insert_peer_stream(
                 self.tunnel_key.clone(),
@@ -111,7 +113,7 @@ impl Server {
         session_id: String,
         local_addr: SocketAddr,
         remote_addr: SocketAddr,
-    ) -> anyhow::Result<PeerClientSender> {
+    ) -> Result<PeerClientSender> {
         let accept = self.get_accept(tunnel_key.clone()).await;
         let context = self.context.lock().await;
         let peer_client_sender = context
@@ -126,7 +128,8 @@ impl Server {
                 Some(accept.accept_tx.clone()),
                 None,
             )
-            .await?;
+            .await
+            .map_err(|e| anyhow!("err:.tunnel.insert_peer_client => e:{}", e))?;
         Ok(peer_client_sender)
     }
 
@@ -136,11 +139,13 @@ impl Server {
         mut stream: StreamFlow,
         local_addr: SocketAddr,
         remote_addr: SocketAddr,
-    ) -> anyhow::Result<()> {
+    ) -> Result<()> {
         let (mut r, _) = tokio::io::split(&mut stream);
-        let tunnel_hello = protopack::read_tunnel_hello(&mut r).await?;
+        let tunnel_hello = protopack::read_tunnel_hello(&mut r)
+            .await
+            .map_err(|e| anyhow!("err:read_tunnel_hello => e:{}", e))?;
         if tunnel_hello.is_none() {
-            return Err(anyhow::anyhow!("err:read_tunnel_hello"))?;
+            return Err(anyhow!("err:read_tunnel_hello"))?;
         }
         let tunnel_hello = tunnel_hello.unwrap();
         log::debug!("server tunnel_hello:{:?}", tunnel_hello);
@@ -153,9 +158,12 @@ impl Server {
                 local_addr,
                 remote_addr,
             )
-            .await?;
+            .await
+            .map_err(|e| anyhow!("err:insert_peer_client => e:{}", e))?;
 
-        PeerClient::insert_peer_stream(false, &peer_client_sender, stream).await?;
+        PeerClient::insert_peer_stream(false, &peer_client_sender, stream)
+            .await
+            .map_err(|e| anyhow!("err:insert_peer_stream => e:{}", e))?;
 
         Ok(())
     }

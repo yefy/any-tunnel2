@@ -2,6 +2,8 @@ use super::peer_client::PeerClient;
 use super::peer_client::PeerClientSender;
 use super::peer_stream_connect::PeerStreamConnect;
 use super::server::AcceptSenderType;
+use anyhow::anyhow;
+use anyhow::Result;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::atomic::AtomicUsize;
@@ -20,17 +22,19 @@ impl Tunnel {
     pub async fn start() -> Tunnel {
         let (tx, mut rx) = mpsc::channel::<PeerClient>(10);
         tokio::spawn(async move {
+            log::info!("tunnel2 start");
             let (shutdown_tx, _) = broadcast::channel::<()>(100);
             loop {
                 let peer_client = rx.recv().await;
                 if peer_client.is_none() {
                     let _ = shutdown_tx.send(());
+                    log::info!("tunnel2 stop");
                     return;
                 }
                 let mut peer_client = peer_client.unwrap();
                 let mut shutdown_rx = shutdown_tx.subscribe();
                 tokio::spawn(async move {
-                    let ret: anyhow::Result<()> = async {
+                    let ret: Result<()> = async {
                         tokio::select! {
                             biased;
                             ret = peer_client.start_cmd() => {
@@ -41,7 +45,7 @@ impl Tunnel {
                                 return Ok(());
                             }
                             else => {
-                                return Err(anyhow::anyhow!("err:start_cmd"))?;
+                                return Err(anyhow!("err:start_cmd"))?;
                             }
                         }
                     }
@@ -65,17 +69,19 @@ impl Tunnel {
                 .build()
                 .unwrap()
                 .block_on(async {
+                    log::info!("tunnel2 start_thread");
                     let (shutdown_tx, _) = broadcast::channel::<()>(100);
                     loop {
                         let peer_client = rx.recv().await;
                         if peer_client.is_none() {
                             let _ = shutdown_tx.send(());
+                            log::info!("tunnel2 stop_thread");
                             return;
                         }
                         let mut peer_client = peer_client.unwrap();
                         let mut shutdown_rx = shutdown_tx.subscribe();
                         tokio::spawn(async move {
-                            let ret: anyhow::Result<()> = async {
+                            let ret: Result<()> = async {
                                 tokio::select! {
                                     biased;
                                     ret = peer_client.start_cmd() => {
@@ -86,7 +92,7 @@ impl Tunnel {
                                         return Ok(());
                                     }
                                     else => {
-                                        return Err(anyhow::anyhow!("err:start_cmd"))?;
+                                        return Err(anyhow!("err:start_cmd"))?;
                                     }
                                 }
                             }
@@ -126,7 +132,7 @@ impl Tunnel {
         peer_stream_max_len: Arc<AtomicUsize>,
         accept_tx: Option<AcceptSenderType>,
         peer_stream_connect: Option<(Arc<Box<dyn PeerStreamConnect>>, SocketAddr)>,
-    ) -> anyhow::Result<PeerClientSender> {
+    ) -> Result<PeerClientSender> {
         let mut peer_client_sender_map = self.peer_client_sender_map.lock().await;
         let peer_client_sender = peer_client_sender_map.get_mut(&tunnel_key);
         let peer_client_sender_map = if peer_client_sender.is_none() {
@@ -153,7 +159,7 @@ impl Tunnel {
                 self.tx
                     .send(peer_client)
                     .await
-                    .map_err(|_| anyhow::anyhow!("err:insert_peer_client"))?;
+                    .map_err(|_| anyhow!("err:insert_peer_client"))?;
                 peer_client_sender
             }
         };

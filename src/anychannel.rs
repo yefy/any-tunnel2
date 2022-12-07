@@ -1,3 +1,5 @@
+use anyhow::anyhow;
+use anyhow::Result;
 use async_trait::async_trait;
 use hashbrown::HashMap;
 use std::marker::PhantomData;
@@ -7,7 +9,7 @@ use tokio::sync::mpsc;
 #[async_trait]
 pub trait AnyAsyncSender {
     type AnyMsg;
-    async fn send(&self, _: Self::AnyMsg) -> anyhow::Result<()>;
+    async fn send(&self, _: Self::AnyMsg) -> Result<()>;
 }
 
 #[async_trait]
@@ -24,9 +26,9 @@ pub struct AnyUnboundedSender<L> {
 #[async_trait]
 impl<L: std::marker::Sync + std::marker::Send> AnyAsyncSender for AnyUnboundedSender<L> {
     type AnyMsg = L;
-    async fn send(&self, any_msg: Self::AnyMsg) -> anyhow::Result<()> {
+    async fn send(&self, any_msg: Self::AnyMsg) -> Result<()> {
         if let Err(_) = self.tx.send(any_msg) {
-            return Err(anyhow::anyhow!("er:AnyUnboundedSender send"));
+            return Err(anyhow!("er:AnyUnboundedSender send"));
         }
         Ok(())
     }
@@ -40,9 +42,9 @@ pub struct AnySender<L> {
 #[async_trait]
 impl<L: std::marker::Sync + std::marker::Send> AnyAsyncSender for AnySender<L> {
     type AnyMsg = L;
-    async fn send(&self, any_msg: Self::AnyMsg) -> anyhow::Result<()> {
+    async fn send(&self, any_msg: Self::AnyMsg) -> Result<()> {
         if let Err(_) = self.tx.send(any_msg).await {
-            return Err(anyhow::anyhow!("er:AnySender send"));
+            return Err(anyhow!("er:AnySender send"));
         }
         Ok(())
     }
@@ -193,7 +195,7 @@ impl<K: std::cmp::Eq + std::hash::Hash, AS: AnyAsyncChannel> AnyAsyncChannelMap<
                     if let Err(_) = tx.send(any_msg).await {
                         let value = self.tx_map.get_mut(&key).as_mut().unwrap().take().unwrap();
                         std::mem::drop(value);
-                        AnyAsyncSenderErr::Err(anyhow::anyhow!("err:AnyAsyncChannelMap send"))
+                        AnyAsyncSenderErr::Err(anyhow!("err:AnyAsyncChannelMap send"))
                     } else {
                         AnyAsyncSenderErr::Ok
                     }
@@ -268,10 +270,10 @@ impl<AS: AnyAsyncChannel> AnyAsyncChannelRoundMap<AS> {
     pub async fn send(
         &mut self,
         any_msg: <<AS as AnyAsyncChannel>::Sender as AnyAsyncSender>::AnyMsg,
-    ) -> anyhow::Result<()> {
+    ) -> Result<()> {
         let index = self.index();
         if index.is_none() {
-            return Err(anyhow::anyhow!("AnySenderMapRound index nil"))?;
+            return Err(anyhow!("AnySenderMapRound index nil"))?;
         }
         let index = index.unwrap();
         let key = self.keys[index];
@@ -289,7 +291,7 @@ impl<AS: AnyAsyncChannel> AnyAsyncChannelRoundMap<AS> {
             }
             None => {
                 self.keys.remove(index);
-                return Err(anyhow::anyhow!("AnySenderMapRound key nil"))?;
+                return Err(anyhow!("AnySenderMapRound key nil"))?;
             }
         }
     }
